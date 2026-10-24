@@ -1,0 +1,3 @@
+- insert:
+    - id: workspace-fork
+      name: '@local/dsh-workspace-fork'
