@@ -94,6 +94,8 @@ function openTurnClosers(events) {
         openStep = event.data.step
         break
       case 'step/end':
+        // A closed step keeps its own history; only the still-open tail turn is
+        // balanced by openTurnClosers, matching dsh-session's recovery rule.
         openStep = null
         pending.clear()
         break
@@ -116,6 +118,9 @@ function openTurnClosers(events) {
       case 'tool/result': {
         const callId = event.data.message.source.callId
         const entry = pending.get(callId)
+        // Only an appended result settles the call for this prefix. A replace
+        // result rewrites an earlier surface range, so it is left to the
+        // upstream ToolCallRecovery semantics rather than closing a call here.
         if (event.surfaceOp === 'append' && entry !== undefined
           && entry.turn === event.data.turn && entry.step === event.data.step) {
           pending.delete(callId)
@@ -319,9 +324,20 @@ export async function forkToWorkspace(ctx, options) {
     try {
       await target.attachSession(childId)
     } catch (error) {
+      // The child is already persisted. Never leave a live, unlisted branch
+      // behind: tear the live Agent down and surface its identity so the
+      // persisted log can be recovered instead of silently disappearing.
+      ctx.logger.warn(
+        `workspace-fork: branch "${childId}" was created but could not attach to workspace "${target.title}" (${target.path}): ${String(error)}`,
+      )
+      try {
+        await created.dispose()
+      } catch (disposeError) {
+        ctx.logger.warn(`workspace-fork: could not dispose unattached branch "${childId}": ${String(disposeError)}`)
+      }
       throw new WorkspaceForkError(
         'workspace/attach-failed',
-        `The conversation was forked but could not be attached to workspace "${target.title}": ${String(error)}`,
+        `The conversation was created as "${childId}" but could not be attached to workspace "${target.title}" (${target.path}): ${String(error)}. Its log remains on disk outside every workspace.`,
       )
     }
 
