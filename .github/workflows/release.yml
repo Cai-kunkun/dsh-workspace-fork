@@ -1,12 +1,13 @@
 name: Release package
 
 on:
-  release:
-    types: [published]
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag that receives the package
+        description: Existing tag to package (manual run)
         required: true
         default: v1.0.0
 
@@ -17,10 +18,10 @@ jobs:
   package:
     runs-on: ubuntu-latest
     steps:
-      - name: Check out the release tag
+      - name: Check out the tag
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.release.tag_name || inputs.tag }}
+          ref: ${{ inputs.tag || github.ref_name }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -41,9 +42,13 @@ jobs:
           path: ${{ steps.pack.outputs.file }}
           if-no-files-found: error
 
-      - name: Attach the package to the GitHub release
+      - name: Attach the package to the tag's GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          TAG: ${{ inputs.tag || github.ref_name }}
           FILE: ${{ steps.pack.outputs.file }}
-        run: gh release upload "$TAG" "$FILE" --clobber
+        run: |
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --title "$TAG" --generate-notes
+          fi
+          gh release upload "$TAG" "$FILE" --clobber
