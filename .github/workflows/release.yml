@@ -1,33 +1,70 @@
-name: Release package
+name: Release
 
 on:
-  release:
-    types: [published]
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
-      tag:
-        description: Existing release tag to package (manual run)
-        required: true
-        default: v1.0.0
+      force:
+        description: Rebuild and re-upload the release for the current package.json version
+        type: boolean
+        default: false
 
 permissions:
   contents: write
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
-  package:
+  release:
     runs-on: ubuntu-latest
     steps:
-      - name: Check out the release tag
+      - name: Check out the repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.release.tag_name || inputs.tag }}
+          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
 
+      - name: Resolve the tag from package.json
+        id: version
+        run: echo "tag=v$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Check whether the release already exists
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create the tag and release
+        if: steps.check.outputs.exists == 'false' || inputs.force
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if ! git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            git tag -a "$TAG" -m "$TAG"
+            git push origin "$TAG"
+          fi
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --title "$TAG" --generate-notes
+          fi
+
       - name: Build the npm package
+        if: steps.check.outputs.exists == 'false' || inputs.force
         id: pack
         run: |
           npm pack
@@ -35,15 +72,17 @@ jobs:
           echo "file=$(basename "$file")" >> "$GITHUB_OUTPUT"
 
       - name: Upload the package as a workflow artifact
+        if: steps.check.outputs.exists == 'false' || inputs.force
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.pack.outputs.file }}
           path: ${{ steps.pack.outputs.file }}
           if-no-files-found: error
 
-      - name: Attach the package to the GitHub release
+      - name: Attach the package to the release
+        if: steps.check.outputs.exists == 'false' || inputs.force
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          TAG: ${{ steps.version.outputs.tag }}
           FILE: ${{ steps.pack.outputs.file }}
         run: gh release upload "$TAG" "$FILE" --clobber
