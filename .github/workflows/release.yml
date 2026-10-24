@@ -31,7 +31,8 @@ jobs:
         id: pack
         run: |
           npm pack
-          echo "file=$(ls -1 ./*.tgz | head -n 1)" >> "$GITHUB_OUTPUT"
+          file="$(ls -1 ./*.tgz | head -n 1)"
+          echo "file=$(basename "$file")" >> "$GITHUB_OUTPUT"
 
       - name: Upload the package as a workflow artifact
         uses: actions/upload-artifact@v4
